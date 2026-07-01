@@ -85,6 +85,7 @@
     box-sizing: border-box;
     margin: 0;
     padding: 0;
+    -webkit-tap-highlight-color: transparent;
 }
 
 html {
@@ -769,6 +770,16 @@ select.input-field {
     max-height: 120px;
     overflow-y: auto;
     line-height: 1.5;
+
+    /* Hide scrollbar (Firefox) */
+    scrollbar-width: none;
+    /* Hide scrollbar (IE/Edge legacy) */
+    -ms-overflow-style: none;
+}
+
+/* Hide scrollbar (Chrome, Safari, Edge Chromium) */
+.dock-input::-webkit-scrollbar {
+    display: none;
 }
 
 .dock-input::placeholder {

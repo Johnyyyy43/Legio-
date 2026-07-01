@@ -27,9 +27,9 @@ export default async function handler(req, res) {
         contents: messages
     };
 
-    // System instruction — must be a Content object with parts array, not a string
+    // System instruction — must be camelCase per REST API spec, a Content object with parts array
     if (system) {
-        body.system_instruction = {
+        body.systemInstruction = {
             parts: [{ text: system }]
         };
     }
