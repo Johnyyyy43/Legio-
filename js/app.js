@@ -399,23 +399,27 @@ function buildStudioFileTree() {
 
 // Open a file: add a tab if not already open, make it active
 function _openFileInStudio(fileId) {
-    const studio = appState.studio;
+    try {
+        const studio = appState.studio;
 
-    if (studio.openTabs.indexOf(fileId) === -1) {
-        studio.openTabs.push(fileId);
+        if (studio.openTabs.indexOf(fileId) === -1) {
+            studio.openTabs.push(fileId);
+        }
+
+        studio.activeTab = fileId;
+
+        // Close the file sidebar after selection on mobile
+        if (DOM.studioSidebar.classList.contains('studio-sidebar-open')) {
+            toggleStudioSidebar();
+        }
+
+        _renderStudioTabs();
+        _renderStudioCode(fileId);
+
+        StateManager.setActiveFile(fileId);
+    } catch (err) {
+        alert('CRASH in _openFileInStudio: ' + err.message + ' | stack: ' + err.stack);
     }
-
-    studio.activeTab = fileId;
-
-    // Close the file sidebar after selection on mobile
-    if (DOM.studioSidebar.classList.contains('studio-sidebar-open')) {
-        toggleStudioSidebar();
-    }
-
-    _renderStudioTabs();
-    _renderStudioCode(fileId);
-
-    StateManager.setActiveFile(fileId);
 }
 
 // Render the tab bar from openTabs
