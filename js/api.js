@@ -51,7 +51,7 @@ const APIController = (function () {
         gemini: {
             endpoint: '/api/gemini',
             format:   'gemini',
-            model:    'gemini-3.5-flash'
+            model:    'gemini-2.5-flash'
         },
         mistral: {
             endpoint: '/api/mistral',

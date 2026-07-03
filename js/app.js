@@ -388,6 +388,7 @@ function buildStudioFileTree() {
         // Use a closure to capture fileId correctly in the loop
         (function (id) {
             item.addEventListener('click', function () {
+                alert('CLICKED FILE: ' + id + ' | name: ' + files[id].name);
                 _openFileInStudio(id);
             });
         })(fileId);
@@ -449,7 +450,9 @@ function _renderStudioTabs() {
 
 // Render file contents into the code viewer
 function _renderStudioCode(fileId) {
-    DOM.studioCodeContent.textContent = StateManager.getFileContent(fileId);
+    const content = StateManager.getFileContent(fileId);
+    DOM.studioCodeContent.textContent = content;
+    alert('RENDERED CONTENT LENGTH: ' + content.length + ' | first 50 chars: ' + content.substring(0, 50));
 
     // Highlight active file in the sidebar
     const items = DOM.studioFileList.querySelectorAll('.file-item');
