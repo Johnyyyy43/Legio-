@@ -625,6 +625,12 @@ window.refreshStudioEditor = function (fileId) {
     console.log('[App] Studio editor refreshed for file:', fileId);
 };
 
+// Expose refreshStudioFileTree globally so UI can trigger updates when new files are created
+window.refreshStudioFileTree = function () {
+    console.log('[App] Refreshing Studio file tree');
+    buildStudioFileTree();
+};
+
 // Expose _openFileInStudio globally so chat can click code block containers to open files
 window._openFileInStudio = function (fileId) {
     openStudio();
