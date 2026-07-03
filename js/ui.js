@@ -113,8 +113,10 @@ const UIController = (function () {
                     container.addEventListener('click', function() {
                         const fileId = container.getAttribute('data-file-id');
                         console.log('[UIController] User clicked code block:', fileId);
-                        if (typeof window._openFileInStudio === 'function') {
-                            window._openFileInStudio(fileId);
+                        if (typeof window.openStudioWithFile === 'function') {
+                            window.openStudioWithFile(fileId);
+                        } else {
+                            console.warn('[UIController] openStudioWithFile not available yet.');
                         }
                     });
                 });
@@ -170,152 +172,87 @@ const UIController = (function () {
     }
 
     // ------------------------------------------------
-    // 5.5 CODE BLOCK INTERCEPTOR
+    // 5.5 REPLY RESOLVER
+    //     Tries ActionParser (structured JSON) first,
+    //     falls back to CodeBlockParser (fence scraping)
+    //     if the model didn't return valid JSON actions.
+    //     Either way, actually WRITES the files via
+    //     FileController — this is the only place in
+    //     ui.js that touches the file system, and it does
+    //     so exclusively through FileController, never
+    //     StateManager directly.
     // ------------------------------------------------
-    function _interceptCodeBlocks(fullText) {
-        console.log('[UIController] _interceptCodeBlocks called');
-        
-        let isCodeBlock = false;
-        let codeBuffer = [];
-        let detectedLang = null;
-        let codeBlocksWritten = 0;
-        let codeBlocksMetadata = [];
-        const FENCE_REGEX = /^```([a-zA-Z0-9_+-]*)\s*$/;
-        
-        const langToExt = {
-            'javascript': 'js', 'js': 'js', 'python': 'py', 'py': 'py',
-            'html': 'html', 'css': 'css', 'json': 'json', 'xml': 'xml',
-            'sql': 'sql', 'bash': 'sh', 'sh': 'sh', 'java': 'java',
-            'cpp': 'cpp', 'c': 'c', 'csharp': 'cs', 'cs': 'cs',
-            'ruby': 'rb', 'php': 'php', 'go': 'go', 'rust': 'rs',
-            'kotlin': 'kt', 'swift': 'swift', 'typescript': 'ts', 'ts': 'ts',
-            'jsx': 'jsx', 'tsx': 'tsx', 'vue': 'vue', 'markdown': 'md', 'md': 'md'
-        };
+    function _resolveReply(fullText) {
+        let result = ActionParser.parse(fullText);
+        let usedFallback = false;
 
-        function _generateSmartName(code, lang) {
-            const ext = langToExt[lang] || (lang || 'txt');
-            const lines = code.split('\n');
-            let hint = '';
-            
-            for (let i = 0; i < Math.min(3, lines.length); i++) {
-                const line = lines[i].trim();
-                if (line && !line.startsWith('//') && !line.startsWith('#') && !line.startsWith('*')) {
-                    hint = line.substring(0, 40).replace(/[^a-z0-9_]/gi, '').toLowerCase();
-                    if (hint.length > 3) break;
-                }
-            }
-
-            const defaultNames = {
-                'html': 'page', 'js': 'script', 'py': 'script', 'css': 'styles',
-                'json': 'data', 'sql': 'query', 'jsx': 'component', 'tsx': 'component'
-            };
-
-            const baseName = hint || defaultNames[ext] || 'code';
-            return baseName + '.' + ext;
+        if (!result) {
+            result = CodeBlockParser.parse(fullText);
+            usedFallback = true;
         }
 
-        function processLine(line) {
-            const fenceMatch = line.match(FENCE_REGEX);
+        console.log('[UIController] Reply resolved via', usedFallback ? 'CodeBlockParser (fallback)' : 'ActionParser (structured)');
 
-            if (fenceMatch) {
-                if (!isCodeBlock) {
-                    isCodeBlock = true;
-                    codeBuffer = [];
-                    detectedLang = fenceMatch[1] || null;
-                    return null;
-                } else {
-                    isCodeBlock = false;
-                    const completeCode = codeBuffer.join('\n');
-                    codeBuffer = [];
+        const codeBlocks = [];
 
-                    if (completeCode.trim() !== '') {
-                        const fileName = _generateSmartName(completeCode, detectedLang);
-                        const timestamp = Date.now();
-                        const blockId = Math.random().toString(36).substring(7);
-                        const targetFileId = 'code_' + timestamp + '_' + blockId;
-
-                        try {
-                            StateManager.createFile(targetFileId, fileName);
-                            StateManager.setFileContent(targetFileId, completeCode);
-                            codeBlocksWritten += 1;
-                            
-                            codeBlocksMetadata.push({
-                                fileId: targetFileId,
-                                fileName: fileName,
-                                language: detectedLang || 'text',
-                                lineCount: completeCode.split('\n').length,
-                                size: completeCode.length
-                            });
-                            
-                            console.log('[UIController] Code saved:', fileName);
-
-                            if (typeof window.refreshStudioFileTree === 'function') {
-                                window.refreshStudioFileTree();
-                            }
-                            if (typeof window.refreshStudioEditor === 'function') {
-                                window.refreshStudioEditor(targetFileId);
-                            }
-                        } catch (err) {
-                            console.error('[UIController] Failed to save code:', err.message);
-                        }
-                    }
-
-                    detectedLang = null;
-                    return null;
-                }
-            }
-
-            if (isCodeBlock) {
-                codeBuffer.push(line);
-                return null;
-            }
-
-            return line;
-        }
-
-        const lines = fullText.split('\n');
-        const proseLines = [];
-
-        for (let i = 0; i < lines.length; i++) {
-            const result = processLine(lines[i]);
-            if (result !== null) {
-                proseLines.push(result);
-            }
-        }
-
-        if (isCodeBlock && codeBuffer.length > 0) {
-            isCodeBlock = false;
-            const completeCode = codeBuffer.join('\n');
-            if (completeCode.trim() !== '') {
-                const fileName = _generateSmartName(completeCode, detectedLang);
-                const timestamp = Date.now();
-                const blockId = Math.random().toString(36).substring(7);
-                const targetFileId = 'code_' + timestamp + '_' + blockId;
-                
-                try {
-                    StateManager.createFile(targetFileId, fileName);
-                    StateManager.setFileContent(targetFileId, completeCode);
-                    codeBlocksWritten += 1;
-                    codeBlocksMetadata.push({
-                        fileId: targetFileId,
-                        fileName: fileName,
-                        language: detectedLang || 'text',
-                        lineCount: completeCode.split('\n').length,
-                        size: completeCode.length
+        result.fileOps.forEach(function (op) {
+            try {
+                if (op.type === 'create') {
+                    const created = FileController.create(op.name, op.content);
+                    codeBlocks.push({
+                        fileId:    created.id,
+                        fileName:  created.name,
+                        lineCount: op.content.split('\n').length
                     });
-                    if (typeof window.refreshStudioFileTree === 'function') {
-                        window.refreshStudioFileTree();
+
+                } else if (op.type === 'update') {
+                    // The AI referred to a file by NAME, not by internal
+                    // ID — resolve it here. If it doesn't exist yet
+                    // (model said "update" but meant "create"), create
+                    // it instead of throwing, so the response doesn't
+                    // just fail silently.
+                    let target = FileController.findByName(op.name);
+                    if (!target) {
+                        console.warn('[UIController] update_file target not found, creating instead:', op.name);
+                        target = FileController.create(op.name, op.content);
+                    } else {
+                        FileController.update(target.id, op.content);
                     }
-                } catch (err) {
-                    console.error('[UIController] Failed to save partial code:', err.message);
+                    codeBlocks.push({
+                        fileId:    target.id,
+                        fileName:  target.name,
+                        lineCount: op.content.split('\n').length
+                    });
+
+                } else if (op.type === 'delete') {
+                    const target = FileController.findByName(op.name);
+                    if (target) {
+                        FileController.remove(target.id);
+                    } else {
+                        console.warn('[UIController] delete_file target not found:', op.name);
+                    }
+
+                } else if (op.type === 'rename') {
+                    const target = FileController.findByName(op.name);
+                    if (target) {
+                        const renamed = FileController.rename(target.id, op.newName);
+                        codeBlocks.push({
+                            fileId:    renamed.id,
+                            fileName:  renamed.name,
+                            lineCount: FileController.read(renamed.id).split('\n').length
+                        });
+                    } else {
+                        console.warn('[UIController] rename_file target not found:', op.name);
+                    }
                 }
+            } catch (err) {
+                console.error('[UIController] Failed to apply file operation:', op, err.message);
             }
-        }
+        });
 
         return {
-            proseText: proseLines.join('\n').trim(),
-            codeBlocksWritten: codeBlocksWritten,
-            codeBlocks: codeBlocksMetadata
+            proseText:  result.proseText,
+            codeBlocks: codeBlocks
         };
     }
 
@@ -348,7 +285,7 @@ const UIController = (function () {
 
             hideTypingIndicator();
 
-            const { proseText, codeBlocksWritten, codeBlocks } = _interceptCodeBlocks(replyText);
+            const { proseText, codeBlocks } = _resolveReply(replyText);
 
             const modelMsg = StateManager.addModel(proseText, _activeModel);
             modelMsg.codeBlocks = codeBlocks || [];

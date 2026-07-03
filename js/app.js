@@ -106,13 +106,7 @@ const DOM = {
 // 2. APP STATE
 // ------------------------------------------------
 const appState = {
-    isSidebarOpen: false,
-
-    // Studio tab tracking
-    studio: {
-        openTabs:  [],   // array of fileId strings
-        activeTab: null  // currently visible fileId
-    }
+    isSidebarOpen: false
 };
 
 
@@ -237,15 +231,15 @@ function submitNewProject() {
         const firstProvider = Object.keys(keys)[0];
         if (firstProvider) UIController.setActiveModel(firstProvider);
 
-        // 4. Reset Studio state
-        appState.studio.openTabs  = [];
-        appState.studio.activeTab = null;
-        DOM.studioTabs.innerHTML      = '';
-        DOM.studioCodeContent.textContent = '// Open a file from the sidebar.';
+        // 4. Reset Studio state — StudioView owns its own open
+        //    tabs/active file now, so a single reset() call clears
+        //    everything instead of manually touching DOM/appState.
+        StudioView.reset();
         DOM.studioProjectName.textContent = name;
 
-        // 5. Rebuild Studio file tree
-        buildStudioFileTree();
+        // 5. (file tree rebuild is automatic — StudioView.reset()
+        //    already re-renders the sidebar from the fresh project's
+        //    VFS, no separate call needed)
 
         // 6. Re-render chat (clears old messages)
         UIController.renderHistory();
@@ -336,22 +330,28 @@ function submitAddModel() {
 
 // ================================================
 // 8. CODE STUDIO
+//    File tree, tabs, and code viewer rendering are
+//    now owned entirely by StudioView (studio-view.js),
+//    which listens for 'legio:filesChanged' and keeps
+//    itself in sync automatically. app.js only owns
+//    opening/closing the panel itself.
 // ================================================
 function openStudio() {
     DOM.codeStudio.classList.remove('studio-hidden');
     DOM.inputDock.style.display = 'none';
 
-    // Update Studio project name from state
     DOM.studioProjectName.textContent = StateManager.getProjectName();
 
-    // If no tab is open yet, open the first available file
-    const files = StateManager.getFiles();
-    const fileIds = Object.keys(files);
-
-    if (appState.studio.openTabs.length === 0 && fileIds.length > 0) {
-        _openFileInStudio(fileIds[0]);
-    } else if (appState.studio.activeTab) {
-        _renderStudioCode(appState.studio.activeTab);
+    // If nothing is open yet, show the currently active file
+    // (or whatever StudioView already has open — it tracks its
+    // own state independently now).
+    const active = StudioView.getActiveFile();
+    if (!active) {
+        const files = StateManager.getFiles();
+        const fileIds = Object.keys(files);
+        if (fileIds.length > 0) {
+            StudioView.openFile(fileIds[0]);
+        }
     }
 }
 
@@ -372,102 +372,21 @@ function toggleStudioSidebar() {
     }
 }
 
-// Build the file list in the Studio sidebar from VFS
-function buildStudioFileTree() {
-    const files = StateManager.getFiles();
-    DOM.studioFileList.innerHTML = '';
+// Opens the Studio panel AND tells StudioView which file to
+// display. This is the single function ui.js calls when the
+// user taps a code-block-container in the chat — it's the
+// clean seam between "open the panel" (app.js's job) and
+// "render this file" (StudioView's job).
+window.openStudioWithFile = function (fileId) {
+    openStudio();
+    StudioView.openFile(fileId);
 
-    for (const fileId in files) {
-        if (!Object.prototype.hasOwnProperty.call(files, fileId)) continue;
-
-        const item = document.createElement('div');
-        item.className = 'file-item';
-        item.setAttribute('data-file-id', fileId);
-        item.textContent = files[fileId].name;
-
-        // Use a closure to capture fileId correctly in the loop
-        (function (id) {
-            item.addEventListener('click', function () {
-                alert('CLICKED FILE: ' + id + ' | name: ' + files[id].name);
-                _openFileInStudio(id);
-            });
-        })(fileId);
-
-        DOM.studioFileList.appendChild(item);
+    // Auto-close the mobile file sidebar after selecting, same
+    // behaviour as tapping a file directly in the tree.
+    if (DOM.studioSidebar.classList.contains('studio-sidebar-open')) {
+        toggleStudioSidebar();
     }
-}
-
-// Open a file: add a tab if not already open, make it active
-function _openFileInStudio(fileId) {
-    try {
-        const studio = appState.studio;
-
-        if (studio.openTabs.indexOf(fileId) === -1) {
-            studio.openTabs.push(fileId);
-        }
-
-        studio.activeTab = fileId;
-
-        // Close the file sidebar after selection on mobile
-        if (DOM.studioSidebar.classList.contains('studio-sidebar-open')) {
-            toggleStudioSidebar();
-        }
-
-        _renderStudioTabs();
-        _renderStudioCode(fileId);
-
-        StateManager.setActiveFile(fileId);
-    } catch (err) {
-        alert('CRASH in _openFileInStudio: ' + err.message + ' | stack: ' + err.stack);
-    }
-}
-
-// Render the tab bar from openTabs
-function _renderStudioTabs() {
-    const files  = StateManager.getFiles();
-    const studio = appState.studio;
-    DOM.studioTabs.innerHTML = '';
-
-    studio.openTabs.forEach(function (fileId) {
-        const file = files[fileId];
-        if (!file) return; // File was deleted — skip
-
-        const tab = document.createElement('div');
-        tab.className  = 'studio-tab' + (fileId === studio.activeTab ? ' active' : '');
-        tab.textContent = file.name;
-        tab.setAttribute('role', 'tab');
-        tab.setAttribute('aria-selected', fileId === studio.activeTab ? 'true' : 'false');
-
-        // Capture fileId in closure
-        (function (id) {
-            tab.addEventListener('click', function () {
-                studio.activeTab = id;
-                StateManager.setActiveFile(id);
-                _renderStudioTabs();
-                _renderStudioCode(id);
-            });
-        })(fileId);
-
-        DOM.studioTabs.appendChild(tab);
-    });
-}
-
-// Render file contents into the code viewer
-function _renderStudioCode(fileId) {
-    const content = StateManager.getFileContent(fileId);
-    DOM.studioCodeContent.textContent = content;
-    alert('RENDERED CONTENT LENGTH: ' + content.length + ' | first 50 chars: ' + content.substring(0, 50));
-
-    // Highlight active file in the sidebar
-    const items = DOM.studioFileList.querySelectorAll('.file-item');
-    items.forEach(function (item) {
-        if (item.getAttribute('data-file-id') === fileId) {
-            item.classList.add('active');
-        } else {
-            item.classList.remove('active');
-        }
-    });
-}
+};
 
 
 // ================================================
@@ -611,38 +530,15 @@ function initEvents() {
 
 
 // ================================================
-// 11.5 STUDIO REFRESH HOOK
-//     Called by StreamInterceptor (js/stream-interceptor.js)
-//     after a code block is written to the VFS, so the
-//     Studio editor view updates live if it's open and
-//     showing the file that was just written to.
-//     This is intentionally the one deliberate global
-//     beyond StateManager/UIController/APIController/
-//     PaywallController, since StreamInterceptor must not
-//     import app.js (would create a circular dependency).
+// 11.5 (removed)
+//     StudioView now listens for 'legio:filesChanged'
+//     directly (see studio-view.js section 10) and keeps
+//     itself in sync without app.js needing to expose any
+//     refresh hooks. The only cross-module hook app.js
+//     still exposes is window.openStudioWithFile, defined
+//     above in section 8, which ui.js calls when a chat
+//     code-block-container is tapped.
 // ================================================
-window.refreshStudioEditor = function (fileId) {
-    // Only refresh if Studio is currently open AND showing this file
-    const studioIsOpen = !DOM.codeStudio.classList.contains('studio-hidden');
-    if (!studioIsOpen) return;
-
-    if (appState.studio.activeTab !== fileId) return;
-
-    _renderStudioCode(fileId);
-    console.log('[App] Studio editor refreshed for file:', fileId);
-};
-
-// Expose refreshStudioFileTree globally so UI can trigger updates when new files are created
-window.refreshStudioFileTree = function () {
-    console.log('[App] Refreshing Studio file tree');
-    buildStudioFileTree();
-};
-
-// Expose _openFileInStudio globally so chat can click code block containers to open files
-window._openFileInStudio = function (fileId) {
-    openStudio();
-    _openFileInStudio(fileId);
-};
 
 
 // ================================================
@@ -660,8 +556,9 @@ function init() {
     // 3. Init the UI controller (attaches send/input events)
     UIController.init();
 
-    // 4. Build the Studio file tree from saved state
-    buildStudioFileTree();
+    // 4. Init the Studio view (renders file tree from saved state,
+    //    starts listening for legio:filesChanged automatically)
+    StudioView.init();
 
     // 5. Populate sidebar with current project
     rebuildSidebarRecents();

@@ -51,7 +51,7 @@ const APIController = (function () {
         gemini: {
             endpoint: '/api/gemini',
             format:   'gemini',
-            model:    'gemini-2.5-flash'
+            model:    'gemini-3.5-flash'
         },
         mistral: {
             endpoint: '/api/mistral',
@@ -120,15 +120,71 @@ const APIController = (function () {
 
     // ------------------------------------------------
     // 3. SYSTEM PROMPT
-    //    Sent with every request to give all models
-    //    the same awareness of their role in Legio.
+    //    Built dynamically per request (not a static
+    //    constant) because it needs to include the
+    //    CURRENT list of files in the workspace. This is
+    //    what lets a second AI (e.g. "@gemini optimize
+    //    Player.js") know Player.js already exists and
+    //    what its filename is, without the user having to
+    //    re-explain anything — it's reading the same
+    //    shared file list every other AI already wrote to.
+    //
+    //    Models are asked to respond with a fenced
+    //    ```json block when they create/edit/delete a
+    //    file. ActionParser (action-parser.js) looks for
+    //    exactly this shape. If a model ignores this and
+    //    just replies with plain code fences instead (some
+    //    models are less reliable at following formatting
+    //    instructions), CodeBlockParser is used as a
+    //    fallback — so nothing breaks either way.
     // ------------------------------------------------
-    const SYSTEM_PROMPT =
-        'You are an AI assistant inside Legio, a multi-agent project workspace. ' +
-        'You share a conversation history with other AI models. ' +
-        'You can see everything the user and other AIs have said. ' +
-        'Be concise, precise, and collaborative. ' +
-        'When writing code, use fenced code blocks with a language tag.';
+    function _buildSystemPrompt() {
+        let fileListText = 'The workspace currently has no files.';
+
+        try {
+            const files = FileController.list();
+            const fileNames = Object.keys(files).map(function (id) {
+                return files[id].name;
+            });
+
+            if (fileNames.length > 0) {
+                fileListText = 'The workspace currently contains these files: ' +
+                    fileNames.join(', ') + '. ' +
+                    'If the user asks you to edit, optimize, fix, or explain a file by ' +
+                    'name, use that exact filename in your response.';
+            }
+        } catch (err) {
+            // FileController may not be loaded yet in older/partial
+            // deployments — degrade gracefully rather than throwing,
+            // since a missing file list is not fatal to sending a message.
+            console.warn('[APIController] Could not read file list for system prompt:', err.message);
+        }
+
+        return (
+            'You are an AI assistant inside Legio, a multi-agent project workspace. ' +
+            'You share a conversation history with other AI models — you can see ' +
+            'everything the user and other AIs have said and done. Be concise, precise, and collaborative.\n\n' +
+
+            fileListText + '\n\n' +
+
+            'When you create, edit, or delete a file, respond with a fenced ```json block ' +
+            'in exactly this shape:\n\n' +
+            '```json\n' +
+            '{\n' +
+            '  "message": "A short human-readable summary of what you did.",\n' +
+            '  "actions": [\n' +
+            '    { "type": "create_file", "name": "Player.js", "content": "...full file content..." },\n' +
+            '    { "type": "update_file", "name": "Enemy.js", "content": "...full file content..." }\n' +
+            '  ]\n' +
+            '}\n' +
+            '```\n\n' +
+            'Valid action types are: create_file, update_file, delete_file, rename_file. ' +
+            'For update_file, always send the COMPLETE new file content, not a diff or partial snippet. ' +
+            'For delete_file, only "name" is required. For rename_file, include "name" (current) and "newName". ' +
+            'If your reply does not involve creating, editing, deleting, or renaming a file, ' +
+            'just reply normally in plain text — do not force a json block when there is nothing to save.'
+        );
+    }
 
     // ------------------------------------------------
     // 4. RESPONSE EXTRACTORS
@@ -226,7 +282,7 @@ const APIController = (function () {
             key:      apiKey,
             model:    provider.model,
             messages: formattedMessages,
-            system:   SYSTEM_PROMPT
+            system:   _buildSystemPrompt()
         };
 
         // ---- HTTP Request ----
